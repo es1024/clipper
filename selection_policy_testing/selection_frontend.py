@@ -24,12 +24,21 @@ def ensemble_combine(state, query):
 
 def ab_select(state, query):
     return [query['candidate_models'][np.random.randint(0, len(query['candidate_models']))]]
+
+def default_feedback_select(state, query):
+    print(query['candidate_models'])
+    return query['candidate_models']
+
+def default_update(state, query):
+    print(state)
+    return state
+
 # Have combine return a single string
 # Check if preds and return default output if not
 
-policies = {'default':{'select':default_select, 'combine':default_combine},
-            'ensemble':{'select':default_select, 'combine':ensemble_combine},
-            'ab':{'select':ab_select, 'combine':default_combine}}
+policies = {'default':{'select':default_select, 'combine':default_combine, 'feedback-select': default_feedback_select, 'update': default_update},
+        'ensemble':{'select':default_select, 'combine':ensemble_combine, 'feedback-select': default_feedback_select, 'update': default_update},
+        'ab':{'select':ab_select, 'combine':default_combine, 'feedback-select': default_feedback_select, 'update': default_update}}
 
 class Cache:
     def __init__(self, refcounts=False):
@@ -79,6 +88,12 @@ class Reciever (threading.Thread):
             elif query['msg'] == 'combine':
                 self.cq.append(query)
                 print('append cquery', query['query_id'])
+            elif query['msg'] == 'feedback-select':
+                self.sq.append(query)
+                print('append feedback query', query['query_id'])
+            elif query['msg'] == 'update':
+                self.cq.append(query)
+                print('append feedback update', query['query_id'])
 
 class Sender (threading.Thread):
     def __init__(self, send_que, sock):
@@ -116,7 +131,7 @@ class SelectionPolicy(threading.Thread):
                 self.query_cache[(query['user_id'], timestamp)] = (state, 1)
                 self.id_cache[query['query_id']] = (query['user_id'], timestamp)
                 try:
-                    select = policies[query['selection_policy']]['select']
+                    select = policies[query['selection_policy']][query['msg']]
                 except KeyError:
                     select = policies['default']['select']
                 new_query = {'query_id': query['query_id'], 'msg': 'exec', 'mids': select(state, query)}
@@ -134,15 +149,19 @@ class Combiner (threading.Thread):
         while True:
             if len(self.query_queue) > 0:
                 query = self.query_queue.popleft()
+                if query['msg'] == 'combine':
+                    ret_key = 'final_prediction'
+                else:
+                    ret_key = 'new_state'
                 state = self.query_cache[self.id_cache[query['query_id']]][0]
                 err = None
                 try:
-                    combine = policies[query['selection_policy']]['combine']
+                    func = policies[query['selection_policy']][query['msg']]
                 except KeyError:
                     err = "Selection Policy not found. Default used.'"
-                    combine = policies['default']['combine']
-                final_pred = combine(state, query)
-                new_query = {'msg':'return', 'final_prediction':final_pred}
+                    func = policies['default'][query['msg']]
+                res = func(state, query)
+                new_query = {'msg':'return', ret_key: res}
                 if err != None:
                     new_query['combine_error'] = err
                 self.send_queue.append(new_query)

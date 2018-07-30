@@ -189,7 +189,7 @@ folly::Future<FeedbackAck> QueryProcessor::update(FeedbackQuery feedback) {
   long query_id = query_counter_.fetch_add(1);
   folly::Future<FeedbackAck> error_response = folly::makeFuture(false);
 
-  std::string query_json = feedback.get_json_string();
+  std::string query_json = feedback.get_json_string("feedback-select");
   message_t msg(query_json.length());
   memcpy ( (void *) msg.data(), query_json.c_str(), query_json.length());
   send_sock.send(msg);
@@ -209,62 +209,80 @@ folly::Future<FeedbackAck> QueryProcessor::update(FeedbackQuery feedback) {
     rcv_sock.getsockopt(ZMQ_RCVMORE, &more, &more_size);
   }
 
-  std::vector<FeedbackTask> feedback_tasks;
+  std::vector<PredictTask> tasks;
   for(std::vector<VersionedModelId>::iterator it = candidate_model_ids.begin(); it != candidate_model_ids.end(); ++it) {
-    feedback_tasks.emplace_back(feedback.feedback_, *it, q_id, 1000000);
+    // latency micros?
+    tasks.emplace_back(feedback.feedback_.input_, *it, 1.0, q_id, 1000000);
   }
 
   log_info_formatted(LOGGING_TAG_QUERY_PROCESSOR,
-                     "Scheduling {} feedback tasks",
-                       feedback_tasks.size());
+                     "Scheduling {} prediction tasks",
+                     tasks.size());
 
-  // 1) Wait for all prediction_tasks to complete
-  // 2) Update selection policy
-  // 3) Complete select_policy_update_promise
-  // 4) Wait for all feedback_tasks to complete (feedback_processed future)
+  vector<folly::Future<Output>> task_futures =
+      task_executor_.schedule_predictions(tasks);
+  if (task_futures.empty()) {
+    // ...
+  }
 
-  vector<folly::Future<FeedbackAck>> feedback_task_futures =
-      task_executor_.schedule_feedback(feedback_tasks);
+  size_t num_tasks = task_futures.size();
+  std::shared_ptr<std::mutex> outputs_mutex = std::make_shared<std::mutex>();
+  std::vector<Output> outputs;
+  outputs.reserve(task_futures.size());
+  std::shared_ptr<std::vector<Output>> outputs_ptr =
+      std::make_shared<std::vector<Output>>(std::move(outputs));
+  std::vector<folly::Future<folly::Unit>> wrapped_task_futures;
+  for (auto it = task_futures.begin();
+            it < task_futures.end(); it++) {
+    wrapped_task_futures.push_back(
+        it->then([outputs_mutex, outputs_ptr](Output output) {
+            std::lock_guard<std::mutex> lock(*outputs_mutex);
+            outputs_ptr->push_back(output);
+          }).onError([](const std::exception& e) {
+          log_error_formatted(
+              LOGGING_TAG_QUERY_PROCESSOR,
+              "Unexpected error while executing predicton tasks: {}",
+              e.what());
+        }));
+  }
 
-  folly::Future<std::vector<FeedbackAck>> all_feedback_completed =
-      folly::collect(feedback_task_futures);
+  folly::Future<std::vector<folly::Unit>> all_tasks_completed =
+      folly::collect(wrapped_task_futures);
 
-  // This promise gets completed after selection policy state update has
-  // finished.
   folly::Promise<FeedbackAck> select_policy_update_promise;
   folly::Future<FeedbackAck> select_policy_updated =
       select_policy_update_promise.getFuture();
   auto state_table = get_state_table();
 
-//  all_preds_completed.then([
-//    moved_promise = std::move(select_policy_update_promise), selection_state,
-//    current_policy, state_table, feedback, query_id, state_key
-//  ](std::vector<Output> preds) mutable {
-//    auto new_selection_state = current_policy->process_feedback(
-//        selection_state, feedback.feedback_, preds);
-//    state_table->put(state_key, current_policy->serialize(new_selection_state));
-//    moved_promise.setValue(true);
-//  });
-//
-//  auto feedback_ack_ready_future =
-//      folly::collect(all_feedback_completed, select_policy_updated);
-//
-//  folly::Future<FeedbackAck> final_feedback_future =
-//      feedback_ack_ready_future.then(
-//          [](std::tuple<std::vector<FeedbackAck>, FeedbackAck> results) {
-//            bool select_policy_update_result = std::get<1>(results);
-//            if (!select_policy_update_result) {
-//              return false;
-//            }
-//            for (FeedbackAck task_feedback : std::get<0>(results)) {
-//              if (!task_feedback) {
-//                return false;
-//              }
-//            }
-//            return true;
-//          });
+  all_tasks_completed.then([
+    this, query_id, outputs_ptr, outputs_mutex, num_tasks, state_table, feedback,
+    select_policy_update_promise = std::move(select_policy_update_promise)
+  ](const std::vector<folly::Unit>& /* completed_future */) mutable {
+    std::lock_guard<std::mutex> outputs_lock(*outputs_mutex);
+    std::string response_json = "{\"query_id\":" + std::to_string(query_id) +
+            ", \"msg\": \"update\", \"selection_policy\": \"" + feedback.selection_policy_ +
+            "\", \"model_outputs\":[";
+    int i = 1;
+    for (auto outputi : *outputs_ptr) {
+      response_json += outputi.get_y_hat_string();
+      if (i != num_tasks) {
+        response_json += ", ";
+      }
+      ++i;
+    }
+    response_json += "]}";
+    message_t msg(response_json.length());
+    memcpy(msg.data(), response_json.c_str(), response_json.length());
+    send_sock.send(msg);
 
-  return true;
+    message_t responsem;
+    rcv_sock.recv(&responsem);
+
+    // save responsem.data()
+    select_policy_update_promise.setValue(true);
+  });
+
+  return select_policy_updated;
 }
 
 }  // namespace clipper

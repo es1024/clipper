@@ -357,7 +357,7 @@ class FeedbackQuery {
   FeedbackQuery(FeedbackQuery &&) = default;
   FeedbackQuery &operator=(FeedbackQuery &&) = default;
 
-  std::string get_json_string();
+  std::string get_json_string(std::string msg);
 
   // Used to provide a namespace for queries. The expected
   // use is to distinguish queries coming from different

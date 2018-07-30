@@ -357,10 +357,12 @@ FeedbackQuery::FeedbackQuery(std::string label, long user_id, Feedback feedback,
       selection_policy_(std::move(selection_policy)),
       candidate_models_(std::move(candidate_models)) {}
 
-std::string FeedbackQuery::get_json_string() {
+std::string FeedbackQuery::get_json_string(std::string msg) {
   std::string json = "{\"label\":\"" + label_ + "\", \"user_id\":" + std::to_string(user_id_)
-          + ", \"feedback\":" + feedback_.get_json_string() + ", \"selection_policy\":"
-                                                              + selection_policy_ + "\"candidate_models\":[";
+          + ", \"feedback\":" + feedback_.get_json_string()
+          + ", \"selection_policy\":\"" + selection_policy_
+          + "\", \"msg\":\"" + msg
+          + "\", \"candidate_models\":[";
   for(std::vector<VersionedModelId>::iterator i = candidate_models_.begin(); i != candidate_models_.end(); ++i) {
     json += (*i).get_json_string();
     if (i + 1 != candidate_models_.end()) {
