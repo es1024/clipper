@@ -161,10 +161,14 @@ class Combiner (threading.Thread):
                     err = "Selection Policy not found. Default used.'"
                     func = policies['default'][query['msg']]
                 res = func(state, query)
-                new_query = {'msg':'return', ret_key: res}
-                if err != None:
-                    new_query['combine_error'] = err
-                self.send_queue.append(new_query)
+                if query['msg'] == 'combine':
+                    new_query = {'msg':'return', 'final_prediction': res}
+                    if err != None:
+                        new_query['combine_error'] = err
+                    self.send_queue.append(new_query)
+                elif query['msg'] == 'update':
+                    self.redis_inst.lpush(query['user_id'], (datetime.datetime.now(), res))
+
                 self.query_cache.pop(self.id_cache[query['query_id']])
                 self.id_cache.pop(query['query_id'])
 

@@ -211,7 +211,7 @@ folly::Future<FeedbackAck> QueryProcessor::update(FeedbackQuery feedback) {
 
   std::vector<PredictTask> tasks;
   for(std::vector<VersionedModelId>::iterator it = candidate_model_ids.begin(); it != candidate_model_ids.end(); ++it) {
-    // latency micros?
+    // TODO: latency micros?
     tasks.emplace_back(feedback.feedback_.input_, *it, 1.0, q_id, 1000000);
   }
 
@@ -222,7 +222,10 @@ folly::Future<FeedbackAck> QueryProcessor::update(FeedbackQuery feedback) {
   vector<folly::Future<Output>> task_futures =
       task_executor_.schedule_predictions(tasks);
   if (task_futures.empty()) {
-    // ...
+    log_error_formatted(LOGGING_TAG_QUERY_PROCESSOR,
+                        "No connected models found for query with id: {}",
+                        query_id);
+    return error_response;
   }
 
   size_t num_tasks = task_futures.size();
@@ -275,10 +278,6 @@ folly::Future<FeedbackAck> QueryProcessor::update(FeedbackQuery feedback) {
     memcpy(msg.data(), response_json.c_str(), response_json.length());
     send_sock.send(msg);
 
-    message_t responsem;
-    rcv_sock.recv(&responsem);
-
-    // save responsem.data()
     select_policy_update_promise.setValue(true);
   });
 
