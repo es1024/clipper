@@ -184,7 +184,7 @@ class RequestHandler {
             clipper::log_info(LOGGING_TAG_MANAGEMENT_FRONTEND,
                               "Add application POST request");
             clipper::log_info(LOGGING_TAG_MANAGEMENT_FRONTEND, "hello");
-            clipper::log_info(LOGGING_TAG_MANAGEMENT_FRONTEND, request->content.string());
+            //clipper::log_info(LOGGING_TAG_MANAGEMENT_FRONTEND, request->content.string());
             std::string result = add_application(request->content.string());
             respond_http(result, "200 OK", response);
           } catch (const json_parse_error& e) {
@@ -629,7 +629,6 @@ class RequestHandler {
    */
   std::string add_application(const std::string& json) {
     rapidjson::Document d;
-    clipper::log_info(LOGGING_TAG_MANAGEMENT_FRONTEND, json);
     parse_json(json, d);
 
     std::string app_name = get_string(d, "name");

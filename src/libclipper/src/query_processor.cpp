@@ -49,14 +49,10 @@ std::shared_ptr<StateDB> QueryProcessor::get_state_table() const {
 }
 
 folly::Future<Response> QueryProcessor::predict(Query query) {
-  clipper::Config& conf = clipper::get_config();
   long query_id = query_counter_.fetch_add(1);
   std::string query_json = (query.get_json_string("select") + std::to_string(query_id) + "}");
   message_t msg(query_json.length());
   memcpy ( (void *) msg.data(), query_json.c_str(), query_json.length());
-  std::string cmd = "python clipper/selection_policy_testing/selection_frontend.py "
-                    + conf.get_redis_address() + " " + std::to_string(conf.get_redis_port()) + " &";
-  popen(cmd.c_str(), "r");
   send_sock.send(msg);
   message_t responsem;
   rcv_sock.recv(&responsem);
@@ -183,13 +179,13 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
 }
 
 folly::Future<FeedbackAck> QueryProcessor::update(FeedbackQuery feedback) {
-  log_info(LOGGING_TAG_QUERY_PROCESSOR, "Received feedback for user {}",
-           feedback.user_id_);
+  log_info_formatted(LOGGING_TAG_QUERY_PROCESSOR, "Received feedback for user {}",
+                     feedback.user_id_);
 
   long query_id = query_counter_.fetch_add(1);
   folly::Future<FeedbackAck> error_response = folly::makeFuture(false);
 
-  std::string query_json = feedback.get_json_string("feedback-select");
+  std::string query_json = feedback.get_json_string("feedback-select", query_id);
   message_t msg(query_json.length());
   memcpy ( (void *) msg.data(), query_json.c_str(), query_json.length());
   send_sock.send(msg);

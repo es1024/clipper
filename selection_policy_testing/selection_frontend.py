@@ -26,11 +26,11 @@ def ab_select(state, query):
     return [query['candidate_models'][np.random.randint(0, len(query['candidate_models']))]]
 
 def default_feedback_select(state, query):
-    print(query['candidate_models'])
+    # with open('/tmp/foo.log', 'a') as f: f.write(repr(query) + '\n')
     return query['candidate_models']
 
 def default_update(state, query):
-    print(state)
+    # with open('/tmp/foo.log', 'a') as f: f.write(repr(state) + '\n')
     return state
 
 # Have combine return a single string
@@ -138,10 +138,11 @@ class SelectionPolicy(threading.Thread):
                 self.send_queue.append(new_query)
 
 class Combiner (threading.Thread):
-    def __init__(self, query_queue, send_queue, query_cache, id_cache):
+    def __init__(self, query_queue, send_queue, redis_inst, query_cache, id_cache):
         super(Combiner, self).__init__()
         self.query_queue = query_queue
         self.send_queue = send_queue
+        self.redis_inst = redis_inst
         self.query_cache = query_cache
         self.id_cache = id_cache
 
@@ -153,7 +154,8 @@ class Combiner (threading.Thread):
                     ret_key = 'final_prediction'
                 else:
                     ret_key = 'new_state'
-                state = self.query_cache[self.id_cache[query['query_id']]][0]
+                user_id, timestamp = self.id_cache[query['query_id']]
+                state = self.query_cache[(user_id, timestamp)][0]
                 err = None
                 try:
                     func = policies[query['selection_policy']][query['msg']]
@@ -167,7 +169,7 @@ class Combiner (threading.Thread):
                         new_query['combine_error'] = err
                     self.send_queue.append(new_query)
                 elif query['msg'] == 'update':
-                    self.redis_inst.lpush(query['user_id'], (datetime.datetime.now(), res))
+                    self.redis_inst.lpush(user_id, (datetime.datetime.now(), res))
 
                 self.query_cache.pop(self.id_cache[query['query_id']])
                 self.id_cache.pop(query['query_id'])
@@ -189,7 +191,7 @@ if __name__ == '__main__':
     reciever = Reciever(select_queue, combine_queue, recieve_sock)
     sender = Sender(send_queue, send_sock)
     sel_pol = SelectionPolicy(select_queue, send_queue, re, query_cache, id_cache)
-    combiner = Combiner(combine_queue, send_queue, query_cache, id_cache)
+    combiner = Combiner(combine_queue, send_queue, re, query_cache, id_cache)
     reciever.start()
     sel_pol.start()
     combiner.start()

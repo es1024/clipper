@@ -25,6 +25,10 @@ int main(int argc, char* argv[]) {
   conf.set_prediction_cache_size(options["prediction_cache_size"].as<long>());
   conf.ready();
 
+  std::string cmd = "python clipper/selection_policy_testing/selection_frontend.py "
+                    + conf.get_redis_address() + " " + std::to_string(conf.get_redis_port()) + " &";
+  popen(cmd.c_str(), "r");
+
   query_frontend::RequestHandler<clipper::QueryProcessor> rh(
       "0.0.0.0", clipper::QUERY_FRONTEND_PORT);
   rh.start_listening();
