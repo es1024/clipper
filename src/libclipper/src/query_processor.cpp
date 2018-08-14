@@ -208,7 +208,7 @@ folly::Future<FeedbackAck> QueryProcessor::update(FeedbackQuery feedback) {
   std::vector<PredictTask> tasks;
   for(std::vector<VersionedModelId>::iterator it = candidate_model_ids.begin(); it != candidate_model_ids.end(); ++it) {
     // TODO: latency micros?
-    tasks.emplace_back(feedback.feedback_.input_, *it, 1.0, q_id, 1000000);
+    tasks.emplace_back(feedback.feedback_.input_, *it, 1.0, q_id, 2000000);
   }
 
   log_info_formatted(LOGGING_TAG_QUERY_PROCESSOR,
