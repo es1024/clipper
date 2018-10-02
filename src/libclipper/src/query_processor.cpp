@@ -51,6 +51,9 @@ std::shared_ptr<StateDB> QueryProcessor::get_state_table() const {
 folly::Future<Response> QueryProcessor::predict(Query query) {
   long query_id = query_counter_.fetch_add(1);
   std::string query_json = (query.get_json_string("select") + std::to_string(query_id) + "}");
+
+  in_use.lock();
+
   message_t msg(query_json.length());
   memcpy ( (void *) msg.data(), query_json.c_str(), query_json.length());
   send_sock.send(msg);
@@ -174,16 +177,19 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
                       models,
                       default_explanation};
     response_promise.setValue(response);
+    in_use.unlock();
   });
   return response_future;
 }
 
 folly::Future<FeedbackAck> QueryProcessor::update(FeedbackQuery feedback) {
-  log_info_formatted(LOGGING_TAG_QUERY_PROCESSOR, "Received feedback for user {}",
-                     feedback.user_id_);
-
   long query_id = query_counter_.fetch_add(1);
   folly::Future<FeedbackAck> error_response = folly::makeFuture(false);
+
+  in_use.lock();
+
+  log_info_formatted(LOGGING_TAG_QUERY_PROCESSOR, "Received feedback for user {}",
+                     feedback.user_id_);
 
   std::string query_json = feedback.get_json_string("feedback-select", query_id);
   message_t msg(query_json.length());
@@ -274,6 +280,7 @@ folly::Future<FeedbackAck> QueryProcessor::update(FeedbackQuery feedback) {
     memcpy(msg.data(), response_json.c_str(), response_json.length());
     send_sock.send(msg);
 
+    in_use.unlock();
     select_policy_update_promise.setValue(true);
   });
 

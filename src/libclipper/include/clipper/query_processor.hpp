@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <utility>
 
@@ -48,6 +49,7 @@ class QueryProcessor {
   zmq::context_t context;
   zmq::socket_t send_sock;
   zmq::socket_t rcv_sock;
+  std::mutex in_use;
   // This is a heteregenous container of different instances of selection
   // policy. The key is the name of the specific selection policy, the value is
   // an instance of that policy. All SelectionPolicy implementations (derived

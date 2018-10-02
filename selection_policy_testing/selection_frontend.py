@@ -7,6 +7,8 @@ import zmq
 import datetime
 import numpy as np
 
+from . import exp3_binary
+
 def default_select(state, query):
     return query['candidate_models']
 
@@ -26,37 +28,109 @@ def ab_select(state, query):
     return [query['candidate_models'][np.random.randint(0, len(query['candidate_models']))]]
 
 def default_feedback_select(state, query):
-    # with open('/tmp/foo.log', 'a') as f: f.write(repr(query) + '\n')
     return query['candidate_models']
 
 def default_update(state, query):
-    # with open('/tmp/foo.log', 'a') as f: f.write(repr(state) + '\n')
     return state
+
+# EXP3_LEARNING_RATE = 0.05
+
+# def draw(w):
+    # sum_w = sum(w.values())
+    # v = np.random.uniform(0.0, sum_w)
+    # for k in w.keys():
+        # if v <= w[k]:
+            # return k
+        # v -= w[k]
+
+# def model_to_str(m):
+    # return '{}-{}'.format(m['name'], m['id'])
+
+# def str_to_model(s):
+    # name, model_id = s.rsplit('-', 1)
+    # return {'name': name, 'id': model_id}
+
+# def exp3_load_state(state, query):
+    # if state == 'state':
+        # state = '{}'
+    # w = json.loads(state)
+    # candidate_models = set(model_to_str(m) for m in query['candidate_models'])
+    # for k in w.keys():
+        # if k not in candidate_models:
+            # del w[k]
+    # avg_w = sum(w.values()) / len(w) if w else 1.0
+    # for k in candidate_models:
+        # if k not in w:
+            # w[k] = avg_w
+    # sum_w = sum(w.values())
+    # for k in w.keys():
+        # w[k] = w[k] / sum_w
+    # return w
+
+# def exp3_select(state, query):
+    # # print(query)
+    # # print(state)
+    # if state == 'state':
+        # r = [query['candidate_models'][np.random.randint(0, len(query['candidate_models']))]]
+        # # print(r)
+        # return r
+        # # return [query['candidate_models'][np.random.randint(0, len(query['candidate_models']))]]
+    # w = exp3_load_state(state, query)
+    # r = [str_to_model(draw(w))]
+    # # print(r)
+    # return r
+    # # return [str_to_model(draw(w))]
+
+# def exp3_binary_update(state, query):
+    # # print(query)
+    # # print(state)
+    # w = exp3_load_state(state, query)
+    # m = model_to_str(query['selected_models'][0])
+    # loss = 0.0 if np.abs(query['model_outputs'][0][0] - query['feedback']['label']) < 0.5 else 1.0
+    # w[m] = w[m] * np.exp(-EXP3_LEARNING_RATE * loss / w[m])
+    # sum_w = sum(w.values())
+    # for k in w.keys():
+        # w[k] = w[k] / sum_w
+    # # print(repr(json.dumps(w)))
+    # return json.dumps(w)
 
 # Have combine return a single string
 # Check if preds and return default output if not
 
 policies = {'default':{'select':default_select, 'combine':default_combine, 'feedback-select': default_feedback_select, 'update': default_update},
         'ensemble':{'select':default_select, 'combine':ensemble_combine, 'feedback-select': default_feedback_select, 'update': default_update},
-        'ab':{'select':ab_select, 'combine':default_combine, 'feedback-select': default_feedback_select, 'update': default_update}}
+        'ab':{'select':ab_select, 'combine':default_combine, 'feedback-select': default_feedback_select, 'update': default_update},
+        'exp3_binary':{'select': exp3_binary.select, 'combine': default_combine, 'feedback-select': exp3_binary.select, 'update': exp3_binary.update}}
 
 class Cache:
     def __init__(self, refcounts=False):
         self.cache = {}
         self.rCount = refcounts
+        self.lock = threading.Lock()
 
     def __getitem__(self, item):
+        value = None
+        self.lock.acquire()
         if item in self.cache:
-            return self.cache[item]
+            value = self.cache[item]
+        self.lock.release()
+        return value
 
     def __setitem__(self, key, value):
+        self.lock.acquire()
         if key not in self.cache or not self.rCount:
             self.cache[key] = value
         else:
-            self.cache[key] = (self.cache[key][0], self.cache[key][1] + 1)
+            try:
+                self.cache[key] = (self.cache[key][0], self.cache[key][1] + 1)
+            except KeyError:
+                raise KeyError((repr(self.cache), key))
+        self.lock.release()
 
     def pop(self, key):
+        self.lock.acquire()
         if key not in self.cache:
+            self.lock.release()
             return True
         state = self.cache[key]
         if self.rCount:
@@ -66,6 +140,7 @@ class Cache:
                 del self.cache[key]
         else:
             del self.cache[key]
+        self.lock.release()
         return state
 
     def popstate(self, key):
@@ -128,13 +203,15 @@ class SelectionPolicy(threading.Thread):
             if len(self.query_queue) > 0:
                 query = self.query_queue.popleft()
                 (timestamp, state) = eval(self.redis_inst.lindex(query['user_id'], 0))
-                self.query_cache[(query['user_id'], timestamp)] = (state, 1)
-                self.id_cache[query['query_id']] = (query['user_id'], timestamp)
                 try:
                     select = policies[query['selection_policy']][query['msg']]
                 except KeyError:
                     select = policies['default']['select']
                 new_query = {'query_id': query['query_id'], 'msg': 'exec', 'mids': select(state, query)}
+                query['selected_models'] = new_query['mids']
+                self.query_cache[(query['user_id'], timestamp)] = ((state, query), 1)
+                self.id_cache[query['query_id']] = (query['user_id'], timestamp)
+                sys.stdout.flush()
                 self.send_queue.append(new_query)
 
 class Combiner (threading.Thread):
@@ -149,13 +226,12 @@ class Combiner (threading.Thread):
     def run(self):
         while True:
             if len(self.query_queue) > 0:
-                query = self.query_queue.popleft()
-                if query['msg'] == 'combine':
-                    ret_key = 'final_prediction'
-                else:
-                    ret_key = 'new_state'
-                user_id, timestamp = self.id_cache[query['query_id']]
-                state = self.query_cache[(user_id, timestamp)][0]
+                in_query = self.query_queue.popleft()
+                sys.stdout.flush()
+                user_id, timestamp = self.id_cache[in_query['query_id']]
+                state, select_query = self.query_cache[(user_id, timestamp)][0]
+                query = select_query.copy()
+                query.update(in_query)
                 err = None
                 try:
                     func = policies[query['selection_policy']][query['msg']]

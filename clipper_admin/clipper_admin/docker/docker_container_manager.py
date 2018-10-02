@@ -484,7 +484,7 @@ def find_unbound_port(start=None,
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            sock.bind(("127.0.0.1", start))
+            sock.bind(("127.0.0.1", int(start)))
             # Make sure we clean up after binding
             del sock
             return start
