@@ -9,6 +9,8 @@ import numpy as np
 
 from . import exp3_binary
 
+sys.stdout = open('/tmp/selection_frontend.log', 'w')
+
 def default_select(state, query):
     return query['candidate_models']
 

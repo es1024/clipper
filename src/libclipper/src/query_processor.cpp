@@ -155,6 +155,9 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
     send_sock.send(msg);
     message_t responsem;
     rcv_sock.recv(&responsem);
+
+    in_use.unlock();
+
     CombinedOutput final_output{std::string(static_cast<char*>(responsem.data()), responsem.size())};
     std::chrono::time_point<std::chrono::high_resolution_clock> end =
         std::chrono::high_resolution_clock::now();
@@ -177,7 +180,6 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
                       models,
                       default_explanation};
     response_promise.setValue(response);
-    in_use.unlock();
   });
   return response_future;
 }
@@ -281,6 +283,7 @@ folly::Future<FeedbackAck> QueryProcessor::update(FeedbackQuery feedback) {
     send_sock.send(msg);
 
     in_use.unlock();
+
     select_policy_update_promise.setValue(true);
   });
 
