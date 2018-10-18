@@ -25,7 +25,7 @@ int main(int argc, char* argv[]) {
   conf.set_prediction_cache_size(options["prediction_cache_size"].as<long>());
   conf.ready();
 
-  std::string cmd = "python clipper/selection_policy_testing/selection_frontend.py "
+  std::string cmd = "cd /clipper && python -m selection_policy_testing.selection_frontend "
                     + conf.get_redis_address() + " " + std::to_string(conf.get_redis_port()) + " &";
   popen(cmd.c_str(), "r");
 
